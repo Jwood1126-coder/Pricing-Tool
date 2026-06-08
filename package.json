@@ -1,6 +1,6 @@
 {
   "name": "brennan-pricing-tool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Brennan Industries Part Cost Lookup Tool (interim, CSV-fed)",
   "private": true,
   "type": "module",
