@@ -15,6 +15,7 @@ export default function AuditPanel({ allLog, usersById, onClearLog }) {
   const [fSell, setFSell] = useState("");
   const [fComp, setFComp] = useState("");
   const [fTarget, setFTarget] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   function applyQuick(q) {
     setQuick(q);
@@ -64,9 +65,17 @@ export default function AuditPanel({ allLog, usersById, onClearLog }) {
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={clearFilters} style={{ background: "rgba(255,255,255,0.15)", color: T.white, border: "none", borderRadius: 5, padding: "4px 12px", fontSize: 11, cursor: "pointer" }}>Clear Filters</button>
           <button onClick={exportCSV} style={{ background: "rgba(255,255,255,0.2)", color: T.white, border: "1px solid rgba(255,255,255,0.4)", borderRadius: 5, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Export CSV</button>
-          {onClearLog && <button onClick={() => { if (confirm("Clear the entire audit log? Uploaded data (parts/customers/etc.) is kept. This cannot be undone.")) onClearLog(); }} style={{ background: "rgba(0,0,0,0.2)", color: T.white, border: "1px solid rgba(255,255,255,0.4)", borderRadius: 5, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Clear Log</button>}
+          {onClearLog && <button onClick={() => setConfirmClear(true)} style={{ background: "rgba(0,0,0,0.2)", color: T.white, border: "1px solid rgba(255,255,255,0.4)", borderRadius: 5, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Clear Log</button>}
         </div>
       </div>
+
+      {confirmClear && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: T.orangeLight, borderBottom: "1px solid #FCD34D", padding: "10px 18px", color: "#92400E", fontSize: 13, fontWeight: 600 }}>
+          <span style={{ flex: 1 }}>Clear the entire audit log? Uploaded data (parts/customers/etc.) is kept. This cannot be undone.</span>
+          <button onClick={() => { setConfirmClear(false); onClearLog(); }} style={{ ...S.btn, background: T.red, padding: "5px 14px", fontSize: 12 }}>Yes, clear log</button>
+          <button onClick={() => setConfirmClear(false)} style={{ ...S.btnO, padding: "5px 14px", fontSize: 12 }}>Cancel</button>
+        </div>
+      )}
 
       <div style={{ padding: "14px 18px", borderBottom: `1px solid ${T.lgray}`, background: "#FAFBFF" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
