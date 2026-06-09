@@ -11,14 +11,20 @@ customer tracking, CSV export.
 
 ## Getting the app (.exe)
 
-Every push to `main` triggers a GitHub Actions build (`.github/workflows/build.yml`).
-To get the Windows executable:
+CI is GitHub Actions (`.github/workflows/build.yml`), which builds on Windows.
 
-1. Open the repo's **Actions** tab → latest **Build Windows EXE** run.
-2. Download the **BrennanPricingTool-portable** artifact.
-3. Unzip and run the `.exe` — it's a portable build, no installer needed.
+**For users (recommended):** download the latest **[Release](../../releases/latest)** and
+run `BrennanPricingTool-<version>.exe` — it's a portable build, no installer needed.
 
-(You can also trigger a build manually via **Run workflow** on that page.)
+**To publish a new release:** bump `version` in `package.json`, commit, then push a
+matching version tag — that triggers the build and publishes a Release with the `.exe`:
+
+```bash
+git tag -a v0.1.2 -m "v0.1.2" && git push origin v0.1.2
+```
+
+**Per-commit builds:** every push to `main` also uploads the `.exe` as an artifact on the
+**Actions** tab (handy for testing without cutting a release).
 
 ## Run / develop locally
 
@@ -56,26 +62,77 @@ Re-uploading a dataset **replaces** it. **Clear All Data / Reset** (Data tab) wi
 everything. Built and tested for **100k+ parts** — parts live in a keyed IndexedDB
 store, so a lookup is a direct indexed read, not a full scan.
 
-## Architecture
+## Source code tour (for anyone taking over)
 
-```
-src/
-  App.jsx            Root: login, nav, single/bulk lookup flows, session log
-  components/        LoginScreen, DataManagement, ColumnMapper, SettingsPanel,
-                     AuditPanel, shared.jsx (CompetitorField, CustomerNumberInput, …)
-  data/
-    schema.js        Canonical record shapes + mappable fields per dataset (the contract)
-    db.js            IndexedDB layer (idb) — keyed stores, chunked bulk writes
-    store.js         High-level data API (the single seam; swaps to NetSuite later)
-    parser.js        CSV parsing (PapaParse, in a worker for large files)
-  utils/
-    pricing.js       buildScenario, calcSell, totalInv  (pure, unit-tested)
-    format.js        csvSafe (fixed), toCSV  (pure, unit-tested)
-    export.js        CSV download
-  styles/tokens.js   colors + shared style objects
-electron/            desktop shell (main.cjs, preload.cjs)
-legacy/              original single-file prototype, kept for reference
-```
+All hand-written code lives in **`src/`** (`src` = *source*). Everything else is
+generated or tooling: `dist/` is Vite's build output, `node_modules/` is downloaded
+dependencies, `release/` is the packaged `.exe` — none of those are committed.
+
+**Dependency direction is one-way:** UI (`components/`) → logic/data (`data/`, `utils/`)
+→ shared (`styles/`, `constants`). Nothing in `data/` or `utils/` reaches back into the
+UI. That's what makes the data layer swappable for NetSuite without touching the UI.
+
+### Entry + root
+- **`src/main.jsx`** — ignition. Mounts `<App/>` into the page. (Vite loads this first.)
+- **`src/App.jsx`** — the controller / "brain." Holds app state (current user, mode,
+  current lookup, session log), the handlers (`handleLookup`, `handleBulkRun`,
+  `handleExport`, …), decides which screen to show, and renders the single-lookup and
+  bulk-import flows. This is the file to start with.
+
+### `src/components/` — the screens (UI)
+Each receives data as props and calls back up to `App.jsx`.
+- **`LoginScreen.jsx`** — account picker (or a "Data Setup" prompt when nothing's loaded).
+- **`DataManagement.jsx`** — the **Data** tab: upload a CSV per dataset, see row counts /
+  last-upload, clear or reset. Drives the upload flow.
+- **`ColumnMapper.jsx`** — after a file is picked, map your columns to the required fields
+  and tick which columns are inventory-by-location.
+- **`SettingsPanel.jsx`** — admin settings: floor margin, daily limit, bulk limit.
+- **`AuditPanel.jsx`** — admin audit trail: filters, full log table, CSV export, clear log.
+- **`shared.jsx`** — reusable widgets used across screens: `CustomerNumberInput`
+  (autocomplete), `CompetitorField`, `DailyBadge`, `StepDot`, `GlobalMarginBar`,
+  `BulkRowEditor`, `BulkResultRow`, `PricingHistoryTab`.
+
+### `src/data/` — the data layer (the NetSuite seam)
+- **`schema.js`** — **the contract.** Canonical record shapes, which fields are required
+  per dataset, and `normalizeRow()` (turns one messy CSV row into a clean record —
+  e.g. `"$5,432.10"` → `5432.1`).
+- **`parser.js`** — reads CSV files via PapaParse: `previewCSV` (header + few rows for
+  mapping) and `parseCSV` (full file, streamed in a worker so 100k rows don't freeze).
+- **`db.js`** — the **only** file that touches IndexedDB (keyed stores, chunked bulk
+  writes, full wipe). Never import this from a component.
+- **`store.js`** — the high-level API the UI calls (`getPart`, `searchCustomers`,
+  `importDataset`, `getSettings`, `appendLog`, …). **The single seam:** to move to
+  NetSuite, rewrite this file's internals and nothing else changes.
+
+### `src/utils/` — pure logic (no UI, no DB; easy to test)
+- **`pricing.js`** — the business rules: `buildScenario` (which cost to use),
+  `calcSell` (`cost / (1 - margin)`), `totalInv`. Preserved exactly from the original.
+- **`format.js`** — `csvSafe`/`toCSV` (correct CSV escaping) and the real-data parsers
+  `parseNumeric`/`parseQty` (tolerate `$`, commas, blanks, BOM).
+- **`export.js`** — triggers a CSV file download.
+
+### Shared
+- **`src/styles/tokens.js`** — `T` (colors) and `S` (shared style objects).
+- **`src/constants.js`** — small fixed lists (e.g. quote reasons).
+
+### Tests (`*.test.js`, run with `npm test`)
+- `utils/pricing.test.js`, `utils/format.test.js` — pricing math + real-data parsing.
+- `data/schema.test.js` — the messy-CSV → correct-pricing pipeline end to end.
+- `data/parser.test.js` — the CSV BOM-handling regression.
+
+### Outside `src/`
+- **`electron/`** — desktop shell (`main.cjs` opens the window and loads the built app;
+  `preload.cjs` is reserved for future IPC).
+- **`legacy/main.original.jsx`** — the original single-file prototype, kept for reference.
+
+### How a request flows through the files
+- **Upload a parts file:** `DataManagement` → `parser.previewCSV` → `ColumnMapper`
+  (you map columns) → `parser.parseCSV` → `schema.normalizeRow` → `store.importDataset`
+  → `db.replaceStore` (IndexedDB).
+- **A single lookup:** type part # in `App.jsx` → `handleLookup` → `store.getPart` →
+  `db.js` → pick spot/recurring + qty → `handleCalc` → `pricing.buildScenario` (which
+  cost) → render + `pricing.calcSell`/`format.fmtSell` → "Save to Log" → `store.appendLog`
+  → shows in the session log + `AuditPanel`, exportable via `export.js`.
 
 ## Known limitations
 
