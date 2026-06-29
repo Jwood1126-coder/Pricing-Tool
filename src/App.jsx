@@ -40,6 +40,8 @@ function filterHistory(log, userId, num, name) {
 export default function App() {
   // -- Loaded data (from IndexedDB) --
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const loadedRef = useRef(false);
   const [users, setUsers] = useState([]);
   const [competitors, setCompetitors] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -53,16 +55,37 @@ export default function App() {
   async function reloadData() {
     // Note: customers are NOT loaded into memory — autocomplete uses the async
     // store.searchCustomers seam so this scales to very large customer sets.
-    const [u, comp, loc, set, lg, status] = await Promise.all([
-      store.getUsers(), store.getCompetitors(),
-      store.getLocations(), store.getSettings(), store.getLog(), store.datasetStatus(),
-    ]);
-    setUsers(u); setCompetitors(comp); setLocations(loc); setSettings(set);
-    setLog(lg.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
-    setPartsCount(status.parts.count);
-    setLoaded(true);
+    try {
+      const [u, comp, loc, set, lg, status] = await Promise.all([
+        store.getUsers(), store.getCompetitors(),
+        store.getLocations(), store.getSettings(), store.getLog(), store.datasetStatus(),
+      ]);
+      setUsers(u); setCompetitors(comp); setLocations(loc); setSettings(set);
+      setLog(lg.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+      setPartsCount(status.parts.count);
+      setLoadError(null);
+      loadedRef.current = true;
+      setLoaded(true);
+    } catch (e) {
+      // Never hang on "Loading…": surface the error with a recovery path.
+      console.error("Data load failed:", e);
+      setLoadError(e?.message || String(e));
+      loadedRef.current = true;
+      setLoaded(true);
+    }
   }
-  useEffect(() => { reloadData(); }, []);
+  useEffect(() => {
+    reloadData();
+    // Watchdog: if the local database is locked by another window or never
+    // opens, don't leave the user stuck on "Loading…" forever.
+    const t = setTimeout(() => {
+      if (!loadedRef.current) {
+        setLoadError("Loading timed out. The local database may be open in another window of the app, or may need a reset.");
+        setLoaded(true);
+      }
+    }, 15000);
+    return () => clearTimeout(t);
+  }, []);
 
   // -- Navigation / session --
   const [currentUser, setCurrentUser] = useState(null);
@@ -320,6 +343,22 @@ export default function App() {
   const locList = locations.length ? locations : (result?.inventory ? Object.keys(result.inventory) : []);
 
   // -- Render gates --
+  if (loadError) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: T.navy, fontFamily: "'Segoe UI',system-ui,sans-serif", padding: 24 }}>
+        <div style={{ background: T.white, color: T.navy, borderRadius: 12, padding: "28px 32px", maxWidth: 480, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Couldn't load local data</div>
+          <div style={{ fontSize: 13, color: T.slate, marginBottom: 18, wordBreak: "break-word" }}>{loadError}</div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button style={S.btn} onClick={() => { setLoadError(null); loadedRef.current = false; setLoaded(false); reloadData(); }}>Retry</button>
+            <button style={{ ...S.btnO, color: T.red, borderColor: T.red }} onClick={async () => { try { await store.clearAll(); } catch (e) { /* ignore */ } location.reload(); }}>Reset all data</button>
+          </div>
+          <div style={{ fontSize: 11, color: T.slateLight, marginTop: 14 }}>If this keeps happening, fully close any other open window of the app, then Retry.</div>
+        </div>
+      </div>
+    );
+  }
+
   if (!loaded) {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: T.navy, color: T.white, fontFamily: "'Segoe UI',system-ui,sans-serif" }}>Loading…</div>;
   }
